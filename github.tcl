@@ -542,18 +542,7 @@ proc ::plugins::github::CFG::show_page {} {
 	} else {
 		update_list_click 0
 	}
-		
-	# Only requery list if needed or once a day
-#	if { [llength $data(plugins_list)] == 0 || $::plugins::github::settings(plugins_last_update) eq "" || 
-#			([clock milliseconds] - $::plugins::github::settings(plugins_last_update)) > 86400000 } {
-#		update_list_click
-#		set data(updating_list_msg) [translate "Updating list..."]
-#		set data(sel_plugin_desc) {}
-#		::plugins::github::update_list
-#		fill_plugins_listbox
-#		set data(updating_list_msg) ""
-#	} 
-	
+
 	plugins_list_select
 }
 
