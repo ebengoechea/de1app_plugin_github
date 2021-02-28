@@ -12,7 +12,7 @@ namespace eval ::plugins::github {
 	variable description [translate "Install and update DE1 app plugins from their GitHub repositories.
 BEWARE these are not tested nor validated by Decent, only by plugin authors. Use at your own risk."]
 
-	namespace export latest_release plugin_repo update_plugin
+	namespace export latest_release plugin_repo update_plugin download_repo_file
 }
 
 proc ::plugins::github::main {} {	
@@ -21,14 +21,18 @@ proc ::plugins::github::main {} {
 	package require tls
 	package require json
 	package require zipfs
+	
+	if { [plugins available DGUI] } {
+		plugins load DGUI
+	} else {
+		error [translate "Can't load github plugin because required plugin DGUI is not available"]
+	}
 
 	msg "Starting the 'GitHub plugins' plugin"
 	if { ![info exists ::debugging] } { set ::debugging 0 }	
-		
+	
 	check_settings
 	save_plugin_settings github
-
-	load_nondist_plugin_list
 }
 
 # Paint settings screen
@@ -37,7 +41,7 @@ proc ::plugins::github::preload {} {
 	
 	if { [plugins available DGUI] } {
 		plugins preload DGUI
-		::plugins::DGUI::set_symbols cloud_download_alt "\uf381" trash_undo "\uf895" 
+		::plugins::DGUI::set_symbols cloud_download_alt "\uf381" trash_undo "\uf895" sync "\uf021"
 		::plugins::github::CFG::setup_ui
 		return "::plugins::github::CFG"
 	} else {
@@ -49,7 +53,8 @@ proc ::plugins::github::check_settings {} {
 	variable settings
 
 	ifexists settings(latest_release_url) "https://api.github.com/repos/<REPO>/releases/latest"
-
+	ifexists settings(repo_file_url) "https://api.github.com/repos/<REPO>/contents/<PATH>"
+	
 	foreach s {plugins_last_update plugins names repos published_at installed_versions github_versions
 			github_versions_flags zipball_urls html_urls release_descs status nondist_plugins } {
 		if { ![info exists settings($s)] } {
@@ -132,6 +137,8 @@ proc ::plugins::github::latest_release { repo } {
 	
 	msg "querying latest release url $url"
 	set status ""
+	set answer ""
+	set code ""
 	set ncode ""
 	if {[catch {
 		set token [::http::geturl $url -timeout 10000]
@@ -169,7 +176,7 @@ proc ::plugins::github::latest_release { repo } {
 		}		
 	} else {
 		set my_err "Could not get latest release from GitHub"
-		msg -WARN "$my_err : $code"
+		msg -WARN "$my_err : $code $answer"
 		say [translate "Download failed"] ""
 		set result(body) [translate $my_err]
 	}
@@ -177,12 +184,20 @@ proc ::plugins::github::latest_release { repo } {
 	return [array get result]
 }
 
+proc ::plugins::github::repo_file_url { repo path } {
+	variable settings
+	regsub "<REPO>" $settings(repo_file_url) $repo link
+	regsub "<PATH>" $link $path link
+	return $link
+}
+
 proc ::plugins::github::download_repo_file { repo path target_path } {
 	if { $repo eq "" || $path eq "" } {
 		msg -WARN "empty repo or path in download_repo_file"
 		return
 	}
-	set url "https://api.github.com/repos/$repo/contents/$path"
+	
+	set url [repo_file_url $repo $path]
 	if { $target_path eq "" } {
 		set target_path "[homedir]/tmp/$path"
 	}
@@ -218,13 +233,18 @@ proc ::plugins::github::download_repo_file { repo path target_path } {
 			return
 		}		
 	} else {
-		set my_err "Could not get latest release from GitHub"
+		set my_err "Could not get content url $url"
 		msg -WARN "$my_err : $code"
 		say [translate "Download failed"] ""
 		return
 	}
 	
 	::decent_http_get_to_file $download_url $target_path
+}
+
+proc ::plugins::github::download_nondist_plugin_list {} {
+	variable github_repo
+	download_repo_file $github_repo plugins.tdb "[plugin_dir github]/plugins.tdb"
 }
 
 # Reads the plugins.tdb file, which contains the list of plugins to be included in any case, even if they
@@ -262,7 +282,8 @@ proc ::plugins::github::load_nondist_plugin_list {} {
 #	results in each of the corresponding settings array items. 
 # The list of plugins is built adding installed ones that have a 'github_repo' namespace variable, to "fixed"
 #	ones set up in file plugins.tdb.
-proc ::plugins::github::update_list { {check_context 0} } {
+# Returns 0 if the list cannot be updated, 1 otherwise.
+proc ::plugins::github::update_list {} {
 	variable settings
 	
 	set settings(plugins_last_update) [clock milliseconds]
@@ -391,7 +412,7 @@ proc ::plugins::github::update_plugin { plugin {repo {}} {zipball_url {}} {make_
 	}
 	
 	set zip_fn "${plugin}_latest.zip"
-	set zip_path "[plugin_dir $plugin]/$zip_fn"
+	set zip_path "[homedir]/tmp/$zip_fn"
 	if { [file exists $zip_path] } {
 		file delete $zip_path
 	}
@@ -487,6 +508,8 @@ namespace eval ::plugins::github::CFG {
 		sel_github_version {}
 		sel_status {}
 		sel_zipball_url {}
+		sel_html_url {}
+		sel_release_desc {}
 		update_plugin_label {}
 		update_plugin_msg {}
 		restore_backup_msg {}
@@ -502,20 +525,34 @@ proc ::plugins::github::CFG::show_page {} {
 	if { ![ifexists data(page_painted) 0] } {
 		::plugins::DGUI::set_scrollbars_dims $ns plugins_list
 		::plugins::DGUI::relocate_text_wrt $widgets(updating_list_msg) $widgets(plugins_list) en 0 -25 e
-		set data(page_painted) 1
 	}
 	
-	::plugins::DGUI::hide_widgets "update_plugin* restore_backup*" $ns
+	::plugins::DGUI::hide_widgets "update_plugin* restore_backup* browse_release* whats_new*" $ns
 	
-	# Only requery list if needed or once an hour
-	if { [llength $data(plugins_list)] == 0 || $::plugins::github::settings(plugins_last_update) eq "" || 
-			([clock milliseconds] - $::plugins::github::settings(plugins_last_update)) > 3600000 } {
-		set data(updating_list_msg) [translate "Updating list..."]
-		set data(sel_plugin_desc) {}
-		::plugins::github::update_list
-		fill_plugins_listbox
-		set data(updating_list_msg) ""
-	} 
+	if { ![plugins enabled github]} {
+		set data(sel_plugin_desc) [translate "Enable the plugin to show the list of available plugins."]
+		::plugins::DGUI::hide_widgets "update_list*" $ns
+		return
+	}
+	
+	if { $data(page_painted) == 0 } {
+		# Full list update first time we enter the page on each session
+		update_list_click 1
+		set data(page_painted) 1
+	} else {
+		update_list_click 0
+	}
+		
+	# Only requery list if needed or once a day
+#	if { [llength $data(plugins_list)] == 0 || $::plugins::github::settings(plugins_last_update) eq "" || 
+#			([clock milliseconds] - $::plugins::github::settings(plugins_last_update)) > 86400000 } {
+#		update_list_click
+#		set data(updating_list_msg) [translate "Updating list..."]
+#		set data(sel_plugin_desc) {}
+#		::plugins::github::update_list
+#		fill_plugins_listbox
+#		set data(updating_list_msg) ""
+#	} 
 	
 	plugins_list_select
 }
@@ -531,32 +568,43 @@ proc ::plugins::github::CFG::setup_ui {} {
 	
 	# Plugins listbox
 	set x_left 150; set y 150
-	::plugins::DGUI::add_listbox $page plugins_list $x_left $y $x_left [expr {$y+80}] 45 20 -label [translate Plugins] \
+	::plugins::DGUI::add_listbox $page plugins_list $x_left $y $x_left [expr {$y+80}] 45 17 -label [translate Plugins] \
 		-label_font_size $::plugins::DGUI::section_font_size 
  	bind $widgets(plugins_list) <<ListboxSelect>> ::plugins::github::CFG::plugins_list_select 
 	
 	::plugins::DGUI::add_variable $page [expr {$x_left+400}] $y updating_list_msg \
 		-width 300 -justify right -font_size $::plugins::DGUI::section_font_size -fill $::plugins::DGUI::remark_color
 	
+	::plugins::DGUI::add_button3 $page update_list $x_left 1150 [translate "Update list"] sync \
+		{::plugins::github::CFG::update_list_click 1} -width 400 -height 90
+	
 	# Selected plugin
 	set x_right 1300; set y 220
 	
-	::plugins::DGUI::add_variable $page $x_right $y sel_plugin_desc -width 550 \
+	::plugins::DGUI::add_variable $page $x_right $y sel_plugin_desc -width 525 \
 		-font_size $::plugins::DGUI::section_font_size
+	
+	::plugins::DGUI::add_text $page [expr {$x_right+75}] [expr {$y+200}] "\[ [translate {Browse release}] \]" \
+		-font_size $::plugins::DGUI::section_font_size -widget_name browse_release \
+		-has_button 1 -button_cmd ::plugins::github::CFG::browse_release_click -button_width 350
+	::plugins::DGUI::add_text $page [expr {$x_right+550}] [expr {$y+200}] "\[ [translate {What's new?}] \]" \
+		-font_size $::plugins::DGUI::section_font_size -widget_name whats_new \
+		-has_button 1 -button_cmd ::plugins::github::CFG::whats_new_click -button_width 300
+	
 	
 	# Update plugin button
 	::plugins::DGUI::add_button2 $page update_plugin $x_right [incr y 350] "" "" cloud_download_alt \
 		::plugins::github::CFG::update_plugin_click
 	
 	::plugins::DGUI::add_variable $page [expr {$x_right+$::plugins::DGUI::button2_width+60}] $y update_plugin_msg \
-		-width 450 -fill $::plugins::DGUI::remark_color -font_size $::plugins::DGUI::section_font_size
+		-width 400 -fill $::plugins::DGUI::remark_color -font_size $::plugins::DGUI::section_font_size
 
 	# Restore backup
 	::plugins::DGUI::add_button2 $page restore_backup $x_right [incr y [expr {$::plugins::DGUI::button2_height+60}]] \
 		[translate "Restore\rbackup"] "" trash_undo ::plugins::github::CFG::restore_backup_click
 	
 	::plugins::DGUI::add_variable $page [expr {$x_right+$::plugins::DGUI::button2_width+60}] $y restore_backup_msg \
-		-width 450 -fill $::plugins::DGUI::remark_color -font_size $::plugins::DGUI::section_font_size
+		-width 400 -fill $::plugins::DGUI::remark_color -font_size $::plugins::DGUI::section_font_size
 	
 	# Footer warning
 	::plugins::DGUI::add_text $page 1280 1350 [translate "Updates and new plugin installs direct from GitHub have not been tested by Decent.
@@ -578,12 +626,11 @@ proc ::plugins::github::CFG::fill_plugins_listbox { {preserve_selection 1} {chec
 	} 
 
 	foreach fn "plugins plugins_list sel_plugin sel_plugin_desc sel_repo sel_name sel_installed_version  
-			sel_github_version sel_status sel_zipball_url update_plugin_label" {
+			sel_github_version sel_status sel_zipball_url sel_html_url sel_release_desc update_plugin_label" {
 		set data($fn) {}
 	}
 
 	for { set i 0 } { $i < [llength $::plugins::github::settings(plugins)] } { incr i } {
-#		lappend data(plugins) [lindex $::plugins::github::settings(plugins) $i]		
 		set item [lindex $::plugins::github::settings(names) $i]
 		set status [lindex $::plugins::github::settings(status) $i]
 		
@@ -593,9 +640,7 @@ proc ::plugins::github::CFG::fill_plugins_listbox { {preserve_selection 1} {chec
 			append item " - available for install"
 		} elseif { $status eq "update_available" } {
 			append item " - update available"
-		} else {
-			#append item " - not found"
-		}				
+		} 			
 		lappend data(plugins_list) $item
 	}
 	
@@ -611,7 +656,7 @@ proc ::plugins::github::CFG::plugins_list_select {} {
 	set ns [namespace current]
 
 	foreach fn "sel_plugin sel_plugin_desc sel_repo sel_name sel_installed_version sel_github_version 
-			sel_status sel_zipball_url update_plugin_label" {
+			sel_status sel_zipball_url sel_html_url sel_release_desc update_plugin_label" {
 		set data($fn) {}
 	}
 	
@@ -625,11 +670,13 @@ proc ::plugins::github::CFG::plugins_list_select {} {
 		set data(sel_plugin) [lindex $::plugins::github::settings(plugins) $sel_idx]
 		set data(sel_repo) [lindex $::plugins::github::settings(repos) $sel_idx]
 		set data(sel_zipball_url) [lindex $::plugins::github::settings(zipball_urls) $sel_idx]
+		set data(sel_html_url) [lindex $::plugins::github::settings(html_urls) $sel_idx]
 		
 		set data(sel_name) [lindex $::plugins::github::settings(names) $sel_idx]
 		set data(sel_installed_version) [lindex $::plugins::github::settings(installed_versions) $sel_idx]
 		set data(sel_github_version) [lindex $::plugins::github::settings(github_versions) $sel_idx]
 		set data(sel_status) [lindex $::plugins::github::settings(status) $sel_idx]
+		set data(sel_release_desc) [lindex $::plugins::github::settings(release_descs) $sel_idx]
 				
 		set github_version_flags [lindex $::plugins::github::settings(github_versions_flags) $sel_idx]
 		set published_at [lindex $::plugins::github::settings(published_at) $sel_idx]
@@ -642,6 +689,7 @@ proc ::plugins::github::CFG::plugins_list_select {} {
 		}
 		if { $data(sel_github_version) == -1 || $data(sel_github_version) eq "" } {
 			append desc "GitHub version: Not found\n"
+			::plugins::DGUI::hide_widgets "browse_release* whats_new*" $ns
 		} else {
 			append desc "GitHub version: v$data(sel_github_version)"
 			if { $github_version_flags ne "" } {
@@ -655,6 +703,7 @@ proc ::plugins::github::CFG::plugins_list_select {} {
 				}
 			}			
 			append desc "\n"
+			::plugins::DGUI::show_widgets "browse_release* whats_new*" $ns
 		}		
 		set data(sel_plugin_desc) $desc
 		
@@ -668,9 +717,53 @@ proc ::plugins::github::CFG::plugins_list_select {} {
 			::plugins::DGUI::hide_widgets "update_plugin*" $ns
 		}
 		
+		
+		
 		set plugin_backup_dir [::plugins::github::plugin_backup_dir $data(sel_plugin)]
 		::plugins::DGUI::show_or_hide_widgets [file isdirectory $plugin_backup_dir] "restore_backup*" $ns
 	}
+}
+
+proc ::plugins::github::CFG::update_list_click { {force_update 0} } {
+	variable data	
+	if { ![plugins enabled github] } return
+	
+	# Only requery list if it's empty, if the user has clicked the update button, or once a day.
+	# There're request limits on GitHub API (https://docs.github.com/en/rest/overview/resources-in-the-rest-api#rate-limiting), 
+	#	so we try not to hit it 
+	set should_update [expr { [llength $::plugins::github::settings(plugins)] == 0 || \
+		$::plugins::github::settings(plugins_last_update) eq "" || 
+		([clock milliseconds] - $::plugins::github::settings(plugins_last_update)) > 86400000 }]
+	
+	if { $force_update == 1 || $should_update == 1 } {
+		if { $::android == 1 && [borg networkinfo] eq "none" } {
+			set data(updating_list_msg) [translate "No WiFi"]
+		} else {
+			set data(updating_list_msg) [translate "Updating list..."]
+			::plugins::github::download_nondist_plugin_list
+		}
+		
+		::plugins::github::load_nondist_plugin_list
+		::plugins::github::update_list		
+	}
+	
+	fill_plugins_listbox
+	set data(updating_list_msg) ""
+}
+
+proc ::plugins::github::CFG::browse_release_click {} {
+	variable data
+	if { $data(sel_html_url) ne "" } {
+		web_browser $data(sel_html_url) 
+	}
+}
+
+proc ::plugins::github::CFG::whats_new_click {} {
+	variable data
+	if { $data(sel_release_desc) ne "" } {
+		::plugins::DGUI::TXT::load_page "sel_release_desc" ::plugins::github::CFG::data(sel_release_desc) 1 \
+			-page_title "[translate "What's new in $data(sel_name) v"]$data(sel_github_version)"
+	}	
 }
 
 proc ::plugins::github::CFG::update_plugin_click {} {
