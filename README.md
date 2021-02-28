@@ -20,10 +20,11 @@ Please note that in cases 2 and 3, when the next DE1 app update is installed, it
 
 1. Your plugin should reside on its own GitHub repository, and should only contain the files that will be copied to the `de1plus/plugins/<your_plugin_name>` folder.
 2. Include the namespace variable `github_url` on your plugin namespace, pointing to your github repository.
-3. If your plugin is ##not## bundled with the DE1 app and you want it listed, tell @ebengoechea to include it, providing the GitHub repo URL, or ask users to add it manually on the plugin settings page.
+3. If your plugin is **not** bundled with the DE1 app and you want it listed, tell @ebengoechea to include it, providing the GitHub repo URL.
 4. Whenever you want to release a new version, you have to tag the commit with the version number (with or without a leading "v", e.g. it can be `1.02` or `v1.02`), and create a release from it on GitHub's web interface.
 
 Users will then be able to install and/or update your plugin from the "GitHub plugins" plugin page. If you want to include an auto-updater button on your own plugin pages, you can use the following example code:
+
 ```tcl
-TO BE ADDED SOON
+TO BE ADDED
 ```
