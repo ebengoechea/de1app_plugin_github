@@ -523,6 +523,7 @@ proc ::plugins::github::CFG::show_page {} {
 	set ns [namespace current]
 
 	if { ![ifexists data(page_painted) 0] } {
+		::plugins::DGUI::ensure_size $widgets(plugins_list) -width 900 -height 850
 		::plugins::DGUI::set_scrollbars_dims $ns plugins_list
 		::plugins::DGUI::relocate_text_wrt $widgets(updating_list_msg) $widgets(plugins_list) en 0 -25 e
 	}
@@ -559,7 +560,7 @@ proc ::plugins::github::CFG::setup_ui {} {
 	set x_left 150; set y 150
 	::plugins::DGUI::add_listbox $page plugins_list $x_left $y $x_left [expr {$y+80}] 45 17 -label [translate Plugins] \
 		-label_font_size $::plugins::DGUI::section_font_size 
- 	bind $widgets(plugins_list) <<ListboxSelect>> ::plugins::github::CFG::plugins_list_select 
+		bind $widgets(plugins_list) <<ListboxSelect>> ::plugins::github::CFG::plugins_list_select 
 	
 	::plugins::DGUI::add_variable $page [expr {$x_left+400}] $y updating_list_msg \
 		-width 300 -justify right -font_size $::plugins::DGUI::section_font_size -fill $::plugins::DGUI::remark_color
@@ -573,10 +574,10 @@ proc ::plugins::github::CFG::setup_ui {} {
 	::plugins::DGUI::add_variable $page $x_right $y sel_plugin_desc -width 525 \
 		-font_size $::plugins::DGUI::section_font_size
 	
-	::plugins::DGUI::add_text $page [expr {$x_right+75}] [expr {$y+200}] "\[ [translate {Browse release}] \]" \
+	::plugins::DGUI::add_text $page [expr {$x_right+75}] [expr {$y+220}] "\[ [translate {Browse release}] \]" \
 		-font_size $::plugins::DGUI::section_font_size -widget_name browse_release \
 		-has_button 1 -button_cmd ::plugins::github::CFG::browse_release_click -button_width 350
-	::plugins::DGUI::add_text $page [expr {$x_right+550}] [expr {$y+200}] "\[ [translate {What's new?}] \]" \
+	::plugins::DGUI::add_text $page [expr {$x_right+550}] [expr {$y+220}] "\[ [translate {What's new?}] \]" \
 		-font_size $::plugins::DGUI::section_font_size -widget_name whats_new \
 		-has_button 1 -button_cmd ::plugins::github::CFG::whats_new_click -button_width 300
 	
@@ -699,14 +700,12 @@ proc ::plugins::github::CFG::plugins_list_select {} {
 		if { $data(sel_status) eq "update_available" } { 
 			set data(update_plugin_label) [translate "Update\rplugin"]
 			::plugins::DGUI::show_widgets "update_plugin*" $ns
- 		} elseif { $data(sel_status) eq "install_available" } {
+			} elseif { $data(sel_status) eq "install_available" } {
 			set data(update_plugin_label) [translate "Install\rplugin"]
 			::plugins::DGUI::show_widgets "update_plugin*" $ns
 		} else {
 			::plugins::DGUI::hide_widgets "update_plugin*" $ns
 		}
-		
-		
 		
 		set plugin_backup_dir [::plugins::github::plugin_backup_dir $data(sel_plugin)]
 		::plugins::DGUI::show_or_hide_widgets [file isdirectory $plugin_backup_dir] "restore_backup*" $ns
